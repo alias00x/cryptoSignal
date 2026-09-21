@@ -4,8 +4,49 @@ const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_ID = "-1004340657482";
 
 const SYMBOLS = [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
-    'AVAXUSDT', 'NEARUSDT', 'TRXUSDT', 'DOGEUSDT', 'LINKUSDT'
+    // --- Major Bluechips (غول‌های اصلی بازار) ---
+    'BTCUSDT',    // Bitcoin
+    'ETHUSDT',    // Ethereum
+    'SOLUSDT',    // Solana
+    'BNBUSDT',    // Binance Coin
+    'XRPUSDT',    // Ripple
+    'DOGEUSDT',   // Dogecoin
+    'ADAUSDT',    // Cardano
+    'TRXUSDT',    // Tron
+    'AVAXUSDT',   // Avalanche
+    'LINKUSDT',   // Chainlink
+
+    // --- Top Layer 1 & Layer 2 (بلاکچین‌های قدرتمند) ---
+    'SUIUSDT',    // Sui
+    'TONUSDT',    // Toncoin
+    'NEARUSDT',   // Near Protocol
+    'APTUSDT',    // Aptos
+    'DOTUSDT',    // Polkadot
+    'ICPUSDT',    // Internet Computer
+    'LTCUSDT',    // Litecoin
+    'BCHUSDT',    // Bitcoin Cash
+    'POLUSDT',    // Polygon (MATIC سابق)
+    'ARBUSDT',    // Arbitrum
+    'OPUSDT',     // Optimism
+    'SEIUSDT',    // Sei
+    'TIAUSDT',    // Celestia
+    'KASUSDT',    // Kaspa
+
+    // --- AI & High Momentum (هوش مصنوعی و ترندهای داغ) ---
+    'FETUSDT',    // Artificial Superintelligence (Fetch.ai)
+    'TAOUSDT',    // Bittensor
+    'RENDERUSDT', // Render Network
+    'INJUSDT',    // Injective
+
+    // --- Top DeFi & DEX (امور مالی غیرمتمرکز) ---
+    'UNIUSDT',    // Uniswap
+    'AAVEUSDT',   // Aave
+    'CAKEUSDT',   // PancakeSwap (ارز درخواستی شما)
+
+    // --- Top High-Beta Memecoins (میم‌کوین‌های پرنوسان فیوچرز) ---
+    '1000PEPEUSDT', // Pepe (در فیوچرز با ضریب ۱۰۰۰ محاسبه می‌شود)
+    '1000SHIBUSDT', // Shiba Inu (در فیوچرز با ضریب ۱۰۰۰ محاسبه می‌شود)
+    'WIFUSDT'       // dogwifhat
 ];
 
 // Map RSI values to specific colored zones
