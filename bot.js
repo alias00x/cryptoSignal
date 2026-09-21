@@ -25,7 +25,7 @@ const SYMBOLS = [
     'ICPUSDT',    // Internet Computer
     'LTCUSDT',    // Litecoin
     'BCHUSDT',    // Bitcoin Cash
-    'POLUSDT',    // Polygon (MATIC سابق)
+    'POLUSDT',    // Polygon
     'ARBUSDT',    // Arbitrum
     'OPUSDT',     // Optimism
     'SEIUSDT',    // Sei
@@ -41,12 +41,15 @@ const SYMBOLS = [
     // --- Top DeFi & DEX (امور مالی غیرمتمرکز) ---
     'UNIUSDT',    // Uniswap
     'AAVEUSDT',   // Aave
-    'CAKEUSDT',   // PancakeSwap (ارز درخواستی شما)
+    'CAKEUSDT',   // PancakeSwap
 
     // --- Top High-Beta Memecoins (میم‌کوین‌های پرنوسان فیوچرز) ---
-    '1000PEPEUSDT', // Pepe (در فیوچرز با ضریب ۱۰۰۰ محاسبه می‌شود)
-    '1000SHIBUSDT', // Shiba Inu (در فیوچرز با ضریب ۱۰۰۰ محاسبه می‌شود)
-    'WIFUSDT'       // dogwifhat
+    '1000PEPEUSDT', // Pepe
+    '1000SHIBUSDT', // Shiba Inu
+    'WIFUSDT',      // dogwifhat
+
+    // --- Precious Metals / Gold (طلا و فلزات گرانبها) ---
+    'PAXGUSDT'    // Pax Gold (معادل دقیق ۱ اونس طلای جهانی)
 ];
 
 // Map RSI values to specific colored zones
