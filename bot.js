@@ -95,9 +95,9 @@ async function sendTelegramMessage(text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Telegram message sent.");
+        console.log("Telegram message dispatched.");
     } catch (err) {
-        console.error("Telegram Error:", err.response ? err.response.data : err.message);
+        console.error("Telegram API Error:", err.response ? err.response.data : err.message);
     }
 }
 
@@ -129,12 +129,12 @@ async function processSymbol(symbol) {
     };
 }
 
-// Compact Hourly Positions Review (Max 2 lines per coin)
-async function reviewActivePositions(validCoins, activeTrades) {
+// 1. Report Results of All Active Predictions
+async function reportActiveResults(validCoins, activeTrades) {
     const tradeKeys = Object.keys(activeTrades);
     if (tradeKeys.length === 0) return;
 
-    let reviewReport = `📊 <b>HOURLY POSITIONS REVIEW & PnL REPORT</b>\n\n`;
+    let resultLines = [];
     let updatedTrades = { ...activeTrades };
 
     for (const key of tradeKeys) {
@@ -145,54 +145,35 @@ async function reviewActivePositions(validCoins, activeTrades) {
         const currentPrice = coinData.currentPrice;
         const currentZone = getZoneInfo(coinData.currRsi1h);
 
+        // Profit & Loss Calculation
         let pnlPercent = trade.type === 'BUY'
             ? ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100
             : ((trade.entryPrice - currentPrice) / trade.entryPrice) * 100;
 
         const pnlFormatted = pnlPercent >= 0 ? `+${pnlPercent.toFixed(2)}%` : `${pnlPercent.toFixed(2)}%`;
-        const pnlIcon = pnlPercent >= 0 ? '🟢' : '🔴';
+        const icon = trade.type === 'BUY' ? '🟢 BUY' : '🔴 SELL';
 
-        let action = "HOLD ⏳";
-        let shouldClose = false;
+        resultLines.push(`${icon} -> #${trade.symbol.replace('USDT', '')} @ $${trade.entryPrice} -> $${currentPrice} (${pnlFormatted})`);
 
-        if (trade.type === 'BUY') {
-            if (currentZone.level >= 5) {
-                action = "Close / TP 🟢 (Overbought Red)";
-                shouldClose = true;
-            } else if (pnlPercent <= -3.0 || currentZone.level <= 2) {
-                action = "Close / SL 🔴 (Support Lost)";
-                shouldClose = true;
-            } else {
-                action = "HOLD ⏳ (Pink Momentum)";
-            }
-        } else { // SELL
-            if (currentZone.level <= 1) {
-                action = "Close / TP 🟢 (Oversold Green)";
-                shouldClose = true;
-            } else if (pnlPercent <= -3.0 || currentZone.level >= 4) {
-                action = "Close / SL 🔴 (Resistance Broken)";
-                shouldClose = true;
-            } else {
-                action = "HOLD ⏳ (Downward Riding)";
-            }
-        }
+        // Close trades if target hit or stopped out
+        const isLongTarget = trade.type === 'BUY' && (currentZone.level >= 5 || pnlPercent <= -3.5);
+        const isShortTarget = trade.type === 'SELL' && (currentZone.level <= 1 || pnlPercent <= -3.5);
 
-        // Exact 2-Line Compact Format
-        reviewReport += `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
-            `• Entry: <code>$${trade.entryPrice}</code> ➔ Current: <code>$${currentPrice}</code> (<b>${pnlFormatted}</b> ${pnlIcon})\n` +
-            `• Decision: <b>${action}</b> (1H RSI: <code>${coinData.currRsi1h}</code>)\n\n`;
-
-        if (shouldClose) {
+        if (isLongTarget || isShortTarget) {
             delete updatedTrades[key];
         }
     }
 
-    await sendTelegramMessage(reviewReport);
-    saveTrades(updatedTrades);
+    if (resultLines.length > 0) {
+        const formattedDate = new Date().toISOString().replace('T', '  T: ');
+        const message = `<b>Result</b>\n` + resultLines.join('\n') + `\n\nUTC: ${formattedDate}`;
+        await sendTelegramMessage(message);
+        saveTrades(updatedTrades);
+    }
 }
 
 async function executeScan() {
-    console.log("Executing Scan and Compact Review Workflow...");
+    console.log("Executing Scan...");
 
     try {
         const results = await Promise.all(SYMBOLS.map(sym => processSymbol(sym)));
@@ -204,27 +185,23 @@ async function executeScan() {
         }
 
         const avgRsi1h = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi1h, 0) / validCoins.length).toFixed(2));
-        const avgRsi5m = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi5m, 0) / validCoins.length).toFixed(2));
-
         let activeTrades = loadTrades();
 
-        // Hourly Review at top of the hour
+        // 1. Send Hourly Results Report First (Top of the hour)
         const currentMinute = new Date().getUTCMinutes();
         if (currentMinute < 10) {
-            await reviewActivePositions(validCoins, activeTrades);
+            await reportActiveResults(validCoins, activeTrades);
             activeTrades = loadTrades();
         }
 
-        // New Signal Processing
+        // 2. Scan and Issue New Signals Afterwards
         for (const coin of validCoins) {
             const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m, prevRsi5m } = coin;
 
             const prevZone1h = getZoneInfo(prevRsi1h);
             const currZone1h = getZoneInfo(currRsi1h);
-            const prevZone5m = getZoneInfo(prevRsi5m);
-            const currZone5m = getZoneInfo(currRsi5m);
 
-            // 1-Hour Shift
+            // 1-Hour Shift Trigger
             if (prevZone1h.name !== currZone1h.name) {
                 const isBullish = currZone1h.level > prevZone1h.level;
                 const isBuyAllowed = isBullish && avgRsi1h >= 45;
@@ -232,16 +209,18 @@ async function executeScan() {
 
                 if (isBuyAllowed || isSellAllowed) {
                     const signalType = isBullish ? "BUY" : "SELL";
-                    const signalTag = isBullish ? "🟢 BUY / LONG" : "🔴 SELL / SHORT";
+                    const signalIcon = isBullish ? "🟢 BUY" : "🔴 SELL";
+                    const formattedDate = new Date().toISOString().replace('T', '  T: ');
 
-                    const message1h = `🚨 <b>${signalTag} (1-HOUR SHIFT)</b>\n\n` +
-                        `• Asset: <b>#${symbol.replace('USDT', '')}</b> @ <code>$${currentPrice}</code>\n` +
-                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: <code>${currRsi1h}</code>)\n` +
-                        `• Market AVG RSI: <code>${avgRsi1h}</code>\n` +
-                        `UTC: ${new Date().toISOString()}`;
+                    const signalMessage = `${signalIcon} -> #${symbol.replace('USDT', '')} @ $${currentPrice}\n` +
+                        `(1-HOUR SHIFT)\n` +
+                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h})\n` +
+                        `• Market AVG RSI: ${avgRsi1h}\n` +
+                        `UTC: ${formattedDate}`;
 
-                    await sendTelegramMessage(message1h);
+                    await sendTelegramMessage(signalMessage);
 
+                    // Register trade into database
                     activeTrades[symbol] = {
                         symbol,
                         type: signalType,
@@ -250,19 +229,6 @@ async function executeScan() {
                     };
                     saveTrades(activeTrades);
                 }
-            }
-
-            // 5-Minute Shift
-            if (prevZone5m.name !== currZone5m.name) {
-                const isBullish5m = currZone5m.level > prevZone5m.level;
-                const signalTag5m = isBullish5m ? "🟢 BUY (5M)" : "🔴 SELL (5M)";
-
-                const message5m = `🔔 <b>${signalTag5m}</b>\n\n` +
-                    `• Asset: <b>#${symbol.replace('USDT', '')}</b> @ <code>$${currentPrice}</code>\n` +
-                    `• Shift: [${prevZone5m.name}] ➔ [${currZone5m.name}] (5M RSI: <code>${currRsi5m}</code>)\n` +
-                    `UTC: ${new Date().toISOString()}`;
-
-                await sendTelegramMessage(message5m);
             }
         }
 
