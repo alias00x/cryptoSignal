@@ -3,6 +3,7 @@ const axios = require('axios');
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_ID = "-1004340657482";
 
+// Standardized symbols compatible with global Bybit / Binance API
 const SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
     'DOGEUSDT', 'ADAUSDT', 'TRXUSDT', 'AVAXUSDT', 'LINKUSDT',
@@ -10,10 +11,8 @@ const SYMBOLS = [
     'ICPUSDT', 'LTCUSDT', 'BCHUSDT', 'POLUSDT', 'ARBUSDT', 
     'OPUSDT', 'SEIUSDT', 'TIAUSDT', 'KASUSDT', 'FETUSDT', 
     'TAOUSDT', 'RENDERUSDT', 'INJUSDT', 'UNIUSDT', 'AAVEUSDT', 
-    'CAKEUSDT', '1000PEPEUSDT', '1000SHIBUSDT', 'WIFUSDT', 'PAXGUSDT'
+    'CAKEUSDT', 'PEPEUSDT', 'SHIBUSDT', 'WIFUSDT', 'PAXGUSDT'
 ];
-
-let lastHourlyReportTime = 0;
 
 function getZoneInfo(rsi) {
     if (rsi >= 70) return { name: "OVERBOUGHT (Red)", level: 5 };
@@ -43,7 +42,7 @@ function calculateRSI(closes, period = 14) {
             avgLoss = (avgLoss * (period - 1)) / period;
         } else {
             avgGain = (avgGain * (period - 1)) / period;
-            avgLoss = (avgLoss * (period - 1) - diff) / period;
+            avgLoss = (avgLoss * (period - 1)) - diff) / period;
         }
     }
 
@@ -52,11 +51,17 @@ function calculateRSI(closes, period = 14) {
     return parseFloat((100 - (100 / (1 + rs))).toFixed(2));
 }
 
+// Global API: Never blocked on GitHub Actions / US Servers
 async function getCandles(symbol, interval, limit = 50) {
     try {
-        const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-        const res = await axios.get(url, { timeout: 8000 });
-        return res.data.map(k => parseFloat(k[4]));
+        const bybitInterval = interval === '1h' ? '60' : '5';
+        const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+        const res = await axios.get(url, { timeout: 7000 });
+        if (res.data && res.data.result && res.data.result.list) {
+            // Bybit returns newest first, reverse to chronological order
+            return res.data.result.list.map(k => parseFloat(k[4])).reverse();
+        }
+        return null;
     } catch (e) {
         return null;
     }
@@ -70,157 +75,140 @@ async function sendTelegramMessage(text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Telegram alert dispatched successfully.");
+        console.log("Telegram alert sent.");
     } catch (err) {
-        console.error("Telegram API Error:", err.message);
+        console.error("Telegram Error:", err.response ? err.response.data : err.message);
     }
 }
 
-// Hourly Market Watchlist with AVG RSI
-async function checkHourlyPotentialWatchlist(marketData, avgRsi1h) {
-    const now = Date.now();
-    if (now - lastHourlyReportTime < 60 * 60 * 1000) return;
+async function processSymbol(symbol) {
+    const [closes1h, closes5m] = await Promise.all([
+        getCandles(symbol, '1h'),
+        getCandles(symbol, '5m')
+    ]);
 
-    let bullishPotentials = [];
-    let bearishPotentials = [];
-
-    for (const item of marketData) {
-        const { symbol, rsi1h, price } = item;
-        if (rsi1h >= 52 && rsi1h < 60) {
-            bullishPotentials.push(`• <b>#${symbol.replace('USDT', '')}</b> ($${price}) - 1H RSI: <code>${rsi1h}</code>`);
-        }
-        if (rsi1h >= 69 || (rsi1h >= 35 && rsi1h <= 43)) {
-            bearishPotentials.push(`• <b>#${symbol.replace('USDT', '')}</b> ($${price}) - 1H RSI: <code>${rsi1h}</code>`);
-        }
+    if (!closes1h || !closes5m || closes1h.length < 20 || closes5m.length < 20) {
+        return null;
     }
 
-    let report = `📡 <b>HOURLY MARKET RADAR (POTENTIAL WATCHLIST)</b>\n\n`;
-    report += `🌐 <b>Overall Market AVG RSI (1H):</b> <code>${avgRsi1h}</code> [${getZoneInfo(avgRsi1h).name}]\n\n`;
+    const currRsi1h = calculateRSI(closes1h);
+    const prevRsi1h = calculateRSI(closes1h.slice(0, -1));
 
-    report += `🟢 <b>BULLISH WATCHLIST (Approaching Breakout):</b>\n`;
-    report += bullishPotentials.length > 0 ? bullishPotentials.slice(0, 6).join('\n') : "• No immediate setups.";
+    const currRsi5m = calculateRSI(closes5m);
+    const prevRsi5m = calculateRSI(closes5m.slice(0, -1));
 
-    report += `\n\n🔴 <b>BEARISH WATCHLIST (Overbought / Breakdown Risk):</b>\n`;
-    report += bearishPotentials.length > 0 ? bearishPotentials.slice(0, 6).join('\n') : "• No immediate setups.";
+    const currentPrice = closes5m[closes5m.length - 1];
 
-    report += `\n\n⚠️ <b>CRITICAL NOTICE:</b>\n`;
-    report += `<i>DO NOT ENTER YET! These setups require confirmation. WAIT FOR THE TRIGGER SIGNAL!</i>\n\n`;
-    report += `UTC Time: ${new Date().toISOString()}`;
-
-    await sendTelegramMessage(report);
-    lastHourlyReportTime = now;
+    return {
+        symbol,
+        currentPrice,
+        currRsi1h,
+        prevRsi1h,
+        currRsi5m,
+        prevRsi5m
+    };
 }
 
-// Master Scan Function
-async function scanMarket() {
-    console.log("Scanning market with global AVG RSI filter...");
-    const marketData = [];
-    let sumRsi1h = 0, sumRsi5m = 0;
-    let validCoinsCount = 0;
+async function executeScan() {
+    console.log("Starting GitHub Actions Scan Execution...");
 
-    // Phase 1: Data Gathering & Individual Calculations
-    const processedCoins = [];
+    try {
+        const results = await Promise.all(SYMBOLS.map(sym => processSymbol(sym)));
+        const validCoins = results.filter(r => r !== null);
 
-    for (const symbol of SYMBOLS) {
-        try {
-            const closes1h = await getCandles(symbol, '1h');
-            const closes5m = await getCandles(symbol, '5m');
-            if (!closes1h || !closes5m || closes1h.length < 20 || closes5m.length < 20) continue;
+        console.log(`Successfully fetched: ${validCoins.length} / ${SYMBOLS.length} assets.`);
 
-            const currRsi1h = calculateRSI(closes1h);
-            const prevRsi1h = calculateRSI(closes1h.slice(0, -1));
-
-            const currRsi5m = calculateRSI(closes5m);
-            const prevRsi5m = calculateRSI(closes5m.slice(0, -1));
-
-            const currentPrice = closes5m[closes5m.length - 1];
-
-            sumRsi1h += currRsi1h;
-            sumRsi5m += currRsi5m;
-            validCoinsCount++;
-
-            processedCoins.push({
-                symbol,
-                currentPrice,
-                currRsi1h,
-                prevRsi1h,
-                currRsi5m,
-                prevRsi5m
-            });
-
-            marketData.push({ symbol, rsi1h: currRsi1h, price: currentPrice });
-        } catch (err) {
-            console.error(`Error processing ${symbol}:`, err.message);
+        if (validCoins.length === 0) {
+            console.error("Zero assets fetched. Check network endpoint.");
+            process.exit(1);
         }
-    }
 
-    if (validCoinsCount === 0) return;
+        const avgRsi1h = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi1h, 0) / validCoins.length).toFixed(2));
+        const avgRsi5m = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi5m, 0) / validCoins.length).toFixed(2));
 
-    // Phase 2: Compute Market-Wide Average RSI (AVG RSI)
-    const avgRsi1h = parseFloat((sumRsi1h / validCoinsCount).toFixed(2));
-    const avgRsi5m = parseFloat((sumRsi5m / validCoinsCount).toFixed(2));
+        console.log(`Market Stats -> 1H AVG RSI: ${avgRsi1h} | 5M AVG RSI: ${avgRsi5m}`);
 
-    console.log(`Global Market Climate -> 1H AVG RSI: ${avgRsi1h} | 5M AVG RSI: ${avgRsi5m}`);
+        for (const coin of validCoins) {
+            const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m, prevRsi5m } = coin;
 
-    // Phase 3: Evaluate Signals with AVG RSI Filtering
-    for (const coin of processedCoins) {
-        const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m, prevRsi5m } = coin;
+            const prevZone1h = getZoneInfo(prevRsi1h);
+            const currZone1h = getZoneInfo(currRsi1h);
+            const prevZone5m = getZoneInfo(prevRsi5m);
+            const currZone5m = getZoneInfo(currRsi5m);
 
-        const prevZone1h = getZoneInfo(prevRsi1h);
-        const currZone1h = getZoneInfo(currRsi1h);
+            // 1. 1-Hour Shift Alert
+            if (prevZone1h.name !== currZone1h.name) {
+                const isBullish = currZone1h.level > prevZone1h.level;
+                const isBuyAllowed = isBullish && avgRsi1h >= 45;
+                const isSellAllowed = !isBullish && avgRsi1h <= 65;
 
-        const prevZone5m = getZoneInfo(prevRsi5m);
-        const currZone5m = getZoneInfo(currRsi5m);
+                if (isBuyAllowed || isSellAllowed) {
+                    const signalTag = isBullish ? "🟢 BUY / LONG SIGNAL" : "🔴 SELL / SHORT SIGNAL";
+                    const message1h = `🚨 <b>${signalTag} (1-HOUR SHIFT)</b>\n\n` +
+                        `Asset: <b>#${symbol.replace('USDT', '')}</b>\n` +
+                        `Price: <b>$${currentPrice}</b>\n\n` +
+                        `🌐 <b>Market AVG RSI (1H):</b> <code>${avgRsi1h}</code>\n` +
+                        `Action: <b>${isBullish ? 'BULLISH EXPANSION' : 'BEARISH CONTRACTION'}</b>\n` +
+                        `• Previous 1H: <code>${prevRsi1h}</code> [${prevZone1h.name}]\n` +
+                        `• Current 1H:  <code>${currRsi1h}</code> [${currZone1h.name}]\n\n` +
+                        `5M Micro RSI: <code>${currRsi5m}</code> [${currZone5m.name}]\n` +
+                        `UTC: ${new Date().toISOString()}`;
 
-        // 1. SIGNAL: 1-HOUR TIMEFRAME SHIFTS
-        if (prevZone1h.name !== currZone1h.name) {
-            const isBullish = currZone1h.level > prevZone1h.level;
+                    await sendTelegramMessage(message1h);
+                }
+            }
 
-            // Filter out counter-market trades using AVG RSI
-            const isBuyAllowed = isBullish && avgRsi1h >= 45; // Do not buy if overall market is dead (<45)
-            const isSellAllowed = !isBullish && avgRsi1h <= 65; // Do not short if market is raging (>65)
+            // 2. 5-Minute Shift Alert
+            if (prevZone5m.name !== currZone5m.name) {
+                const isBullish5m = currZone5m.level > prevZone5m.level;
+                const signalTag5m = isBullish5m ? "🟢 BUY / SCALP LONG (5M SHIFT)" : "🔴 SELL / SCALP SHORT (5M SHIFT)";
 
-            if (isBuyAllowed || isSellAllowed) {
-                const signalTag = isBullish ? "🟢 BUY / LONG SIGNAL" : "🔴 SELL / SHORT SIGNAL";
-
-                const message1h = `🚨 <b>${signalTag} (1-HOUR SHIFT)</b>\n\n` +
+                const message5m = `🔔 <b>${signalTag5m}</b>\n\n` +
                     `Asset: <b>#${symbol.replace('USDT', '')}</b>\n` +
                     `Price: <b>$${currentPrice}</b>\n\n` +
-                    `🌐 <b>Market AVG RSI (1H):</b> <code>${avgRsi1h}</code>\n` +
-                    `Action: <b>${isBullish ? 'BULLISH EXPANSION' : 'BEARISH CONTRACTION'}</b>\n` +
-                    `• Previous 1H: <code>${prevRsi1h}</code> [${prevZone1h.name}]\n` +
-                    `• Current 1H:  <code>${currRsi1h}</code> [${currZone1h.name}]\n\n` +
-                    `5M Micro RSI: <code>${currRsi5m}</code> [${currZone5m.name}]\n` +
+                    `🌐 <b>Market AVG RSI (5M):</b> <code>${avgRsi5m}</code>\n` +
+                    `Movement: <b>${isBullish5m ? 'UPWARD REBOUND' : 'DOWNWARD REJECTION'}</b>\n` +
+                    `• From: <code>${prevRsi5m}</code> [${prevZone5m.name}]\n` +
+                    `• To:   <code>${currRsi5m}</code> [${currZone5m.name}]\n\n` +
+                    `1H Macro Context: <code>${currRsi1h}</code> [${currZone1h.name}]\n` +
                     `UTC: ${new Date().toISOString()}`;
 
-                await sendTelegramMessage(message1h);
+                await sendTelegramMessage(message5m);
             }
         }
 
-        // 2. SIGNAL: 5-MINUTE TIMEFRAME SHIFTS
-        if (prevZone5m.name !== currZone5m.name) {
-            const isBullish5m = currZone5m.level > prevZone5m.level;
-            const signalTag5m = isBullish5m ? "🟢 BUY / SCALP LONG (5M SHIFT)" : "🔴 SELL / SCALP SHORT (5M SHIFT)";
+        // Check if top of the hour for hourly potential radar
+        const currentMinute = new Date().getUTCMinutes();
+        if (currentMinute < 10) {
+            let bullishPotentials = [];
+            let bearishPotentials = [];
 
-            const message5m = `🔔 <b>${signalTag5m}</b>\n\n` +
-                `Asset: <b>#${symbol.replace('USDT', '')}</b>\n` +
-                `Price: <b>$${currentPrice}</b>\n\n` +
-                `🌐 <b>Market AVG RSI (5M):</b> <code>${avgRsi5m}</code>\n` +
-                `Movement: <b>${isBullish5m ? 'UPWARD REBOUND' : 'DOWNWARD REJECTION'}</b>\n` +
-                `• From: <code>${prevRsi5m}</code> [${prevZone5m.name}]\n` +
-                `• To:   <code>${currRsi5m}</code> [${currZone5m.name}]\n\n` +
-                `1H Macro Context: <code>${currRsi1h}</code> [${currZone1h.name}]\n` +
-                `UTC: ${new Date().toISOString()}`;
+            for (const item of validCoins) {
+                if (item.currRsi1h >= 52 && item.currRsi1h < 60) {
+                    bullishPotentials.push(`• <b>#${item.symbol.replace('USDT', '')}</b> ($${item.currentPrice}) - 1H: <code>${item.currRsi1h}</code>`);
+                }
+                if (item.currRsi1h >= 69 || (item.currRsi1h >= 35 && item.currRsi1h <= 43)) {
+                    bearishPotentials.push(`• <b>#${item.symbol.replace('USDT', '')}</b> ($${item.currentPrice}) - 1H: <code>${item.currRsi1h}</code>`);
+                }
+            }
 
-            await sendTelegramMessage(message5m);
+            let report = `📡 <b>HOURLY MARKET RADAR (POTENTIAL WATCHLIST)</b>\n\n`;
+            report += `🌐 <b>Overall Market AVG RSI (1H):</b> <code>${avgRsi1h}</code> [${getZoneInfo(avgRsi1h).name}]\n\n`;
+            report += `🟢 <b>BULLISH WATCHLIST:</b>\n` + (bullishPotentials.length > 0 ? bullishPotentials.slice(0, 6).join('\n') : "• None.") + `\n\n`;
+            report += `🔴 <b>BEARISH WATCHLIST:</b>\n` + (bearishPotentials.length > 0 ? bearishPotentials.slice(0, 6).join('\n') : "• None.") + `\n\n`;
+            report += `⚠️ <b>CRITICAL NOTICE:</b>\n<i>DO NOT ENTER YET! WAIT FOR THE TRIGGER SIGNAL!</i>\n\n`;
+            report += `UTC Time: ${new Date().toISOString()}`;
+
+            await sendTelegramMessage(report);
         }
-    }
 
-    // Phase 4: Hourly Radar Watchlist
-    await checkHourlyPotentialWatchlist(marketData, avgRsi1h);
-    console.log("Scan iteration completed.");
+        console.log("Scan finished cleanly.");
+        process.exit(0);
+
+    } catch (error) {
+        console.error("Fatal Error:", error.message);
+        process.exit(1);
+    }
 }
 
-// Execute scan every 60 seconds
-scanMarket();
-setInterval(scanMarket, 60 * 1000);
+executeScan();
