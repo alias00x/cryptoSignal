@@ -3,7 +3,6 @@ const axios = require('axios');
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_ID = "-1004340657482";
 
-// Standardized symbols compatible with global Bybit / Binance API
 const SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
     'DOGEUSDT', 'ADAUSDT', 'TRXUSDT', 'AVAXUSDT', 'LINKUSDT',
@@ -42,7 +41,7 @@ function calculateRSI(closes, period = 14) {
             avgLoss = (avgLoss * (period - 1)) / period;
         } else {
             avgGain = (avgGain * (period - 1)) / period;
-            avgLoss = (avgLoss * (period - 1)) - diff) / period;
+            avgLoss = (avgLoss * (period - 1) - diff) / period;
         }
     }
 
@@ -51,14 +50,12 @@ function calculateRSI(closes, period = 14) {
     return parseFloat((100 - (100 / (1 + rs))).toFixed(2));
 }
 
-// Global API: Never blocked on GitHub Actions / US Servers
 async function getCandles(symbol, interval, limit = 50) {
     try {
         const bybitInterval = interval === '1h' ? '60' : '5';
         const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
         const res = await axios.get(url, { timeout: 7000 });
         if (res.data && res.data.result && res.data.result.list) {
-            // Bybit returns newest first, reverse to chronological order
             return res.data.result.list.map(k => parseFloat(k[4])).reverse();
         }
         return null;
@@ -177,7 +174,7 @@ async function executeScan() {
             }
         }
 
-        // Check if top of the hour for hourly potential radar
+        // Hourly Watchlist Check
         const currentMinute = new Date().getUTCMinutes();
         if (currentMinute < 10) {
             let bullishPotentials = [];
