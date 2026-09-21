@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TARGET_CHAT_ID = "-1003912506906";
+const TARGET_CHAT_ID = "-1004340657482";
 
 const SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
