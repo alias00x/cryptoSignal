@@ -1,58 +1,20 @@
 const axios = require('axios');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TARGET_CHAT_ID = "-1004340657482";
+const TARGET_CHAT_ID = "-1003912506906";
 
 const SYMBOLS = [
-    // --- Major Bluechips (غول‌های اصلی بازار) ---
-    'BTCUSDT',    // Bitcoin
-    'ETHUSDT',    // Ethereum
-    'SOLUSDT',    // Solana
-    'BNBUSDT',    // Binance Coin
-    'XRPUSDT',    // Ripple
-    'DOGEUSDT',   // Dogecoin
-    'ADAUSDT',    // Cardano
-    'TRXUSDT',    // Tron
-    'AVAXUSDT',   // Avalanche
-    'LINKUSDT',   // Chainlink
-
-    // --- Top Layer 1 & Layer 2 (بلاکچین‌های قدرتمند) ---
-    'SUIUSDT',    // Sui
-    'TONUSDT',    // Toncoin
-    'NEARUSDT',   // Near Protocol
-    'APTUSDT',    // Aptos
-    'DOTUSDT',    // Polkadot
-    'ICPUSDT',    // Internet Computer
-    'LTCUSDT',    // Litecoin
-    'BCHUSDT',    // Bitcoin Cash
-    'POLUSDT',    // Polygon
-    'ARBUSDT',    // Arbitrum
-    'OPUSDT',     // Optimism
-    'SEIUSDT',    // Sei
-    'TIAUSDT',    // Celestia
-    'KASUSDT',    // Kaspa
-
-    // --- AI & High Momentum (هوش مصنوعی و ترندهای داغ) ---
-    'FETUSDT',    // Artificial Superintelligence (Fetch.ai)
-    'TAOUSDT',    // Bittensor
-    'RENDERUSDT', // Render Network
-    'INJUSDT',    // Injective
-
-    // --- Top DeFi & DEX (امور مالی غیرمتمرکز) ---
-    'UNIUSDT',    // Uniswap
-    'AAVEUSDT',   // Aave
-    'CAKEUSDT',   // PancakeSwap
-
-    // --- Top High-Beta Memecoins (میم‌کوین‌های پرنوسان فیوچرز) ---
-    '1000PEPEUSDT', // Pepe
-    '1000SHIBUSDT', // Shiba Inu
-    'WIFUSDT',      // dogwifhat
-
-    // --- Precious Metals / Gold (طلا و فلزات گرانبها) ---
-    'PAXGUSDT'    // Pax Gold (معادل دقیق ۱ اونس طلای جهانی)
+    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
+    'DOGEUSDT', 'ADAUSDT', 'TRXUSDT', 'AVAXUSDT', 'LINKUSDT',
+    'SUIUSDT', 'TONUSDT', 'NEARUSDT', 'APTUSDT', 'DOTUSDT', 
+    'ICPUSDT', 'LTCUSDT', 'BCHUSDT', 'POLUSDT', 'ARBUSDT', 
+    'OPUSDT', 'SEIUSDT', 'TIAUSDT', 'KASUSDT', 'FETUSDT', 
+    'TAOUSDT', 'RENDERUSDT', 'INJUSDT', 'UNIUSDT', 'AAVEUSDT', 
+    'CAKEUSDT', '1000PEPEUSDT', '1000SHIBUSDT', 'WIFUSDT', 'PAXGUSDT'
 ];
 
-// Map RSI values to specific colored zones
+let lastHourlyReportTime = 0;
+
 function getZoneInfo(rsi) {
     if (rsi >= 70) return { name: "OVERBOUGHT (Red)", level: 5 };
     if (rsi >= 60) return { name: "STRONG (Pink)", level: 4 };
@@ -61,7 +23,6 @@ function getZoneInfo(rsi) {
     return { name: "OVERSOLD (Deep Green)", level: 1 };
 }
 
-// Calculate Wilder's RSI
 function calculateRSI(closes, period = 14) {
     if (closes.length <= period) return null;
     let gains = 0, losses = 0;
@@ -91,7 +52,6 @@ function calculateRSI(closes, period = 14) {
     return parseFloat((100 - (100 / (1 + rs))).toFixed(2));
 }
 
-// Fetch candles from Binance Futures API
 async function getCandles(symbol, interval, limit = 50) {
     try {
         const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
@@ -102,7 +62,6 @@ async function getCandles(symbol, interval, limit = 50) {
     }
 }
 
-// Send alert to Telegram
 async function sendTelegramMessage(text) {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     try {
@@ -111,58 +70,120 @@ async function sendTelegramMessage(text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Telegram alert sent successfully.");
+        console.log("Telegram alert dispatched successfully.");
     } catch (err) {
         console.error("Telegram API Error:", err.message);
     }
 }
 
-// Main scanning logic
+// Generates hourly watchlist of potential setups
+async function checkHourlyPotentialWatchlist(marketData) {
+    const now = Date.now();
+    // Run every 60 minutes
+    if (now - lastHourlyReportTime < 60 * 60 * 1000) return;
+
+    let bullishPotentials = [];
+    let bearishPotentials = [];
+
+    for (const item of marketData) {
+        const { symbol, rsi1h, price } = item;
+        // Bullish Watchlist: Moving towards Pink (52-60)
+        if (rsi1h >= 52 && rsi1h < 60) {
+            bullishPotentials.push(`• <b>#${symbol.replace('USDT', '')}</b> ($${price}) - 1H RSI: <code>${rsi1h}</code>`);
+        }
+        // Bearish Watchlist: Overbought (>70) or Breaking Down (35-43)
+        if (rsi1h >= 69 || (rsi1h >= 35 && rsi1h <= 43)) {
+            bearishPotentials.push(`• <b>#${symbol.replace('USDT', '')}</b> ($${price}) - 1H RSI: <code>${rsi1h}</code>`);
+        }
+    }
+
+    let report = `📡 <b>HOURLY MARKET WATCHLIST (POTENTIAL SETUPS)</b>\n\n`;
+
+    report += `🟢 <b>BULLISH WATCHLIST (Approaching Breakout):</b>\n`;
+    report += bullishPotentials.length > 0 ? bullishPotentials.slice(0, 6).join('\n') : "• No immediate setups.";
+
+    report += `\n\n🔴 <b>BEARISH WATCHLIST (Overbought Exhaustion / Breakdown):</b>\n`;
+    report += bearishPotentials.length > 0 ? bearishPotentials.slice(0, 6).join('\n') : "• No immediate setups.";
+
+    report += `\n\n⚠️ <b>CRITICAL NOTICE:</b>\n`;
+    report += `<i>DO NOT ENTER YET! These assets have high potential but require confirmation. WAIT FOR THE TRIGGER SIGNAL!</i>\n\n`;
+    report += `UTC Time: ${new Date().toISOString()}`;
+
+    await sendTelegramMessage(report);
+    lastHourlyReportTime = now;
+}
+
 async function scanMarket() {
-    console.log("Scanning market transitions (1H Trend + 5M Zone Shifts)...");
+    console.log("Scanning market for BUY/SELL signals and Hourly Watchlist...");
+    const marketData = [];
 
     for (const symbol of SYMBOLS) {
         try {
-            // 1. Fetch 1-Hour Trend Data
+            // 1H Data
             const closes1h = await getCandles(symbol, '1h');
-            if (!closes1h) continue;
-            const rsi1h = calculateRSI(closes1h);
-            const zone1h = getZoneInfo(rsi1h);
+            if (!closes1h || closes1h.length < 20) continue;
 
-            // 2. Fetch 5-Minute Data (Current vs Previous Candle)
+            const currRsi1h = calculateRSI(closes1h);
+            const prevRsi1h = calculateRSI(closes1h.slice(0, -1));
+            const prevZone1h = getZoneInfo(prevRsi1h);
+            const currZone1h = getZoneInfo(currRsi1h);
+
+            // 5M Data
             const closes5m = await getCandles(symbol, '5m');
             if (!closes5m || closes5m.length < 20) continue;
 
             const currRsi5m = calculateRSI(closes5m);
             const prevRsi5m = calculateRSI(closes5m.slice(0, -1));
-            const currentPrice = closes5m[closes5m.length - 1];
-
             const prevZone5m = getZoneInfo(prevRsi5m);
             const currZone5m = getZoneInfo(currRsi5m);
+            const currentPrice = closes5m[closes5m.length - 1];
 
-            console.log(`[${symbol}] 1H: ${rsi1h} | 5M Transition: ${prevZone5m.name} -> ${currZone5m.name}`);
+            marketData.push({ symbol, rsi1h: currRsi1h, price: currentPrice });
 
-            // Detect if the coin changed its color zone in 5M timeframe
-            if (prevZone5m.name !== currZone5m.name) {
-                const isShiftUp = currZone5m.level > prevZone5m.level;
-                const shiftDirection = isShiftUp ? "🟢 UPWARD TRANSITION (BULLISH)" : "🔴 DOWNWARD TRANSITION (BEARISH)";
+            // 1. SIGNAL: 1-HOUR TIMEFRAME SHIFTS (BUY OR SELL)
+            if (prevZone1h.name !== currZone1h.name) {
+                const isBullish = currZone1h.level > prevZone1h.level;
+                const signalTag = isBullish ? "🟢 BUY / LONG SIGNAL" : "🔴 SELL / SHORT SIGNAL";
 
-                const message = `🚨 <b>RSI COLOR ZONE TRANSITION</b>\n\n` +
+                const message1h = `🚨 <b>${signalTag} (1-HOUR TIMEFRAME SHIFT)</b>\n\n` +
                     `Asset: <b>#${symbol.replace('USDT', '')}</b>\n` +
                     `Price: <b>$${currentPrice}</b>\n\n` +
-                    `⏱ <b>1-Hour Context:</b> <code>${rsi1h}</code> [${zone1h.name}]\n` +
-                    `🔄 <b>5-Minute Shift:</b> ${shiftDirection}\n` +
+                    `Action: <b>${isBullish ? 'BULLISH EXPANSION' : 'BEARISH CONTRACTION'}</b>\n` +
+                    `• Previous 1H: <code>${prevRsi1h}</code> [${prevZone1h.name}]\n` +
+                    `• Current 1H:  <code>${currRsi1h}</code> [${currZone1h.name}]\n\n` +
+                    `5M Micro RSI: <code>${currRsi5m}</code> [${currZone5m.name}]\n` +
+                    `UTC: ${new Date().toISOString()}`;
+
+                await sendTelegramMessage(message1h);
+            }
+
+            // 2. SIGNAL: 5-MINUTE REJECTION / BREAKOUT
+            if (prevZone5m.name !== currZone5m.name) {
+                const isBullish5m = currZone5m.level > prevZone5m.level;
+                const signalTag5m = isBullish5m ? "🟢 BUY / SCALP LONG (5M SHIFT)" : "🔴 SELL / SCALP SHORT (5M SHIFT)";
+
+                const message5m = `🔔 <b>${signalTag5m}</b>\n\n` +
+                    `Asset: <b>#${symbol.replace('USDT', '')}</b>\n` +
+                    `Price: <b>$${currentPrice}</b>\n\n` +
+                    `Movement: <b>${isBullish5m ? 'UPWARD REBOUND' : 'DOWNWARD REJECTION'}</b>\n` +
                     `• From: <code>${prevRsi5m}</code> [${prevZone5m.name}]\n` +
                     `• To:   <code>${currRsi5m}</code> [${currZone5m.name}]\n\n` +
-                    `UTC Timestamp: ${new Date().toISOString()}`;
+                    `1H Trend Context: <code>${currRsi1h}</code> [${currZone1h.name}]\n` +
+                    `UTC: ${new Date().toISOString()}`;
 
-                await sendTelegramMessage(message);
+                await sendTelegramMessage(message5m);
             }
+
         } catch (error) {
             console.error(`Error processing ${symbol}:`, error.message);
         }
     }
+
+    // Process hourly potential watchlist
+    await checkHourlyPotentialWatchlist(marketData);
     console.log("Scan iteration completed.");
 }
 
+// Continuous execution every 60 seconds
 scanMarket();
+setInterval(scanMarket, 60 * 1000);
