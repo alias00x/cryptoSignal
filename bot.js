@@ -1,14 +1,23 @@
 const axios = require('axios');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TARGET_CHAT_ID = "-1003912506906";
+const TARGET_CHAT_ID = "-1004340657482";
 
 const SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
     'AVAXUSDT', 'NEARUSDT', 'TRXUSDT', 'DOGEUSDT', 'LINKUSDT'
 ];
 
-// Wilder's RSI calculation
+// Map RSI values to specific colored zones
+function getZoneInfo(rsi) {
+    if (rsi >= 70) return { name: "OVERBOUGHT (Red)", level: 5 };
+    if (rsi >= 60) return { name: "STRONG (Pink)", level: 4 };
+    if (rsi >= 40) return { name: "NEUTRAL (Grey)", level: 3 };
+    if (rsi >= 30) return { name: "WEAK (Light Green)", level: 2 };
+    return { name: "OVERSOLD (Deep Green)", level: 1 };
+}
+
+// Calculate Wilder's RSI
 function calculateRSI(closes, period = 14) {
     if (closes.length <= period) return null;
     let gains = 0, losses = 0;
@@ -38,18 +47,18 @@ function calculateRSI(closes, period = 14) {
     return parseFloat((100 - (100 / (1 + rs))).toFixed(2));
 }
 
-// Fetch candlestick data from Binance Futures
+// Fetch candles from Binance Futures API
 async function getCandles(symbol, interval, limit = 50) {
     try {
         const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
         const res = await axios.get(url, { timeout: 8000 });
-        return res.data.map(k => parseFloat(k[4])); // Closing prices
+        return res.data.map(k => parseFloat(k[4]));
     } catch (e) {
         return null;
     }
 }
 
-// Send formatted alert to Telegram
+// Send alert to Telegram
 async function sendTelegramMessage(text) {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     try {
@@ -58,43 +67,50 @@ async function sendTelegramMessage(text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Alert delivered to Telegram.");
+        console.log("Telegram alert sent successfully.");
     } catch (err) {
         console.error("Telegram API Error:", err.message);
     }
 }
 
-// Main execution function
+// Main scanning logic
 async function scanMarket() {
-    console.log("Starting multi-timeframe scan...");
+    console.log("Scanning market transitions (1H Trend + 5M Zone Shifts)...");
 
     for (const symbol of SYMBOLS) {
         try {
-            // 4-Hour Trend Check
-            const closes4h = await getCandles(symbol, '4h');
-            if (!closes4h) continue;
-            const rsi4h = calculateRSI(closes4h);
+            // 1. Fetch 1-Hour Trend Data
+            const closes1h = await getCandles(symbol, '1h');
+            if (!closes1h) continue;
+            const rsi1h = calculateRSI(closes1h);
+            const zone1h = getZoneInfo(rsi1h);
 
-            // 5-Minute Entry Check
+            // 2. Fetch 5-Minute Data (Current vs Previous Candle)
             const closes5m = await getCandles(symbol, '5m');
-            if (!closes5m) continue;
-            const rsi5m = calculateRSI(closes5m);
+            if (!closes5m || closes5m.length < 20) continue;
+
+            const currRsi5m = calculateRSI(closes5m);
+            const prevRsi5m = calculateRSI(closes5m.slice(0, -1));
             const currentPrice = closes5m[closes5m.length - 1];
 
-            console.log(`[${symbol}] 4H RSI: ${rsi4h} | 5M RSI: ${rsi5m}`);
+            const prevZone5m = getZoneInfo(prevRsi5m);
+            const currZone5m = getZoneInfo(currRsi5m);
 
-            // Strategy: 4H Strong (55 - 68) + 5M Oversold Dip (<= 38)
-            const isMacroStrong = (rsi4h >= 55 && rsi4h <= 68);
-            const isMicroOversold = (rsi5m <= 38);
+            console.log(`[${symbol}] 1H: ${rsi1h} | 5M Transition: ${prevZone5m.name} -> ${currZone5m.name}`);
 
-            if (isMacroStrong && isMicroOversold) {
-                const message = `🚨 <b>RSI DIVERGENCE / PULLBACK SIGNAL</b>\n\n` +
+            // Detect if the coin changed its color zone in 5M timeframe
+            if (prevZone5m.name !== currZone5m.name) {
+                const isShiftUp = currZone5m.level > prevZone5m.level;
+                const shiftDirection = isShiftUp ? "🟢 UPWARD TRANSITION (BULLISH)" : "🔴 DOWNWARD TRANSITION (BEARISH)";
+
+                const message = `🚨 <b>RSI COLOR ZONE TRANSITION</b>\n\n` +
                     `Asset: <b>#${symbol.replace('USDT', '')}</b>\n` +
                     `Price: <b>$${currentPrice}</b>\n\n` +
-                    `📊 <b>4H RSI:</b> <code>${rsi4h}</code> (Macro Bullish Trend)\n` +
-                    `📉 <b>5M RSI:</b> <code>${rsi5m}</code> (Intraday Oversold Dip)\n\n` +
-                    `💡 <i>Setup: Macro uptrend remains intact while micro timeframe offers a pullback entry.</i>\n` +
-                    `UTC Time: ${new Date().toISOString()}`;
+                    `⏱ <b>1-Hour Context:</b> <code>${rsi1h}</code> [${zone1h.name}]\n` +
+                    `🔄 <b>5-Minute Shift:</b> ${shiftDirection}\n` +
+                    `• From: <code>${prevRsi5m}</code> [${prevZone5m.name}]\n` +
+                    `• To:   <code>${currRsi5m}</code> [${currZone5m.name}]\n\n` +
+                    `UTC Timestamp: ${new Date().toISOString()}`;
 
                 await sendTelegramMessage(message);
             }
@@ -102,7 +118,7 @@ async function scanMarket() {
             console.error(`Error processing ${symbol}:`, error.message);
         }
     }
-    console.log("Scan completed.");
+    console.log("Scan iteration completed.");
 }
 
 scanMarket();
