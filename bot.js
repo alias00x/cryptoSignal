@@ -3,14 +3,15 @@ const axios = require('axios');
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_ID = "-1004340657482";
 
+// Spot symbols accessible globally via Binance Public Data API
 const SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
     'DOGEUSDT', 'ADAUSDT', 'TRXUSDT', 'AVAXUSDT', 'LINKUSDT',
     'SUIUSDT', 'TONUSDT', 'NEARUSDT', 'APTUSDT', 'DOTUSDT', 
     'ICPUSDT', 'LTCUSDT', 'BCHUSDT', 'POLUSDT', 'ARBUSDT', 
-    'OPUSDT', 'SEIUSDT', 'TIAUSDT', 'KASUSDT', 'FETUSDT', 
-    'TAOUSDT', 'RENDERUSDT', 'INJUSDT', 'UNIUSDT', 'AAVEUSDT', 
-    'CAKEUSDT', 'PEPEUSDT', 'SHIBUSDT', 'WIFUSDT', 'PAXGUSDT'
+    'OPUSDT', 'SEIUSDT', 'TIAUSDT', 'FETUSDT', 'TAOUSDT', 
+    'RENDERUSDT', 'INJUSDT', 'UNIUSDT', 'AAVEUSDT', 'CAKEUSDT', 
+    'PEPEUSDT', 'SHIBUSDT', 'WIFUSDT', 'PAXGUSDT'
 ];
 
 function getZoneInfo(rsi) {
@@ -50,13 +51,16 @@ function calculateRSI(closes, period = 14) {
     return parseFloat((100 - (100 / (1 + rs))).toFixed(2));
 }
 
+// Global open endpoint: Completely unblocked for GitHub Actions US runners
 async function getCandles(symbol, interval, limit = 50) {
     try {
-        const bybitInterval = interval === '1h' ? '60' : '5';
-        const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
-        const res = await axios.get(url, { timeout: 7000 });
-        if (res.data && res.data.result && res.data.result.list) {
-            return res.data.result.list.map(k => parseFloat(k[4])).reverse();
+        const url = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+        const res = await axios.get(url, { 
+            timeout: 6000,
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        });
+        if (Array.isArray(res.data)) {
+            return res.data.map(k => parseFloat(k[4])); // Closing price
         }
         return null;
     } catch (e) {
@@ -116,7 +120,7 @@ async function executeScan() {
         console.log(`Successfully fetched: ${validCoins.length} / ${SYMBOLS.length} assets.`);
 
         if (validCoins.length === 0) {
-            console.error("Zero assets fetched. Check network endpoint.");
+            console.error("Endpoint issue. Zero coins retrieved.");
             process.exit(1);
         }
 
