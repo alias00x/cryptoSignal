@@ -63,7 +63,7 @@ function calculateRSI(closes, period = 14) {
             avgLoss = (avgLoss * (period - 1)) / period;
         } else {
             avgGain = (avgGain * (period - 1)) / period;
-            avgLoss = (avgLoss * (period - 1)) - diff) / period;
+            avgLoss = (avgLoss * (period - 1) - diff) / period;
         }
     }
 
@@ -134,7 +134,6 @@ async function processSymbol(symbol) {
     };
 }
 
-// 1. Guaranteed 10-Minute Trade Status Report
 async function sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m) {
     const tradeKeys = Object.keys(state.trades || {});
     const formattedDate = new Date().toISOString().replace('T', '  T: ');
@@ -195,13 +194,11 @@ async function sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m) {
             }
         }
 
-        // VIP Client Format
         const vipCard = `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
             `• Price: <code>$${trade.entryPrice}</code> ➔ <code>$${currentPrice}</code> (<b>${pnlFormatted}</b> ${pnlIcon})\n` +
             `${actionBanner}`;
         vipCards.push(vipCard);
 
-        // Admin Log Format
         const logCard = `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
             `• PnL: ${pnlFormatted} | Entry: $${trade.entryPrice} | Now: $${currentPrice}\n` +
             `• Telemetry: 1H RSI [${currRsi1h}] | 5M RSI [${currRsi5m}]\n` +
@@ -234,7 +231,6 @@ async function sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m) {
     saveState(state);
 }
 
-// 2. Comprehensive Daily Performance Report (UTC 00:00)
 async function checkDailyPerformanceReport(state) {
     const now = new Date();
     const today = now.toISOString().split('T')[0];
@@ -281,7 +277,6 @@ async function checkDailyPerformanceReport(state) {
     }
 }
 
-// Master Execution (Designed for GitHub Actions)
 async function executeScan() {
     console.log(`Starting GitHub Actions Scan Execution...`);
 
@@ -299,13 +294,9 @@ async function executeScan() {
 
         let state = loadState();
 
-        // 1. Send 10-Minute Trade Status Update
         await sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m);
-
-        // 2. Check Daily Audit
         await checkDailyPerformanceReport(state);
 
-        // 3. Scan For New Signals (No Duplicates on Active Trades)
         for (const coin of validCoins) {
             const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m } = coin;
 
@@ -332,7 +323,6 @@ async function executeScan() {
                         ? (currentPrice * 0.975).toFixed(4) 
                         : (currentPrice * 1.025).toFixed(4);
 
-                    // VIP Format
                     const vipMessage = `${isBullish ? '🟢 BUY SIGNAL (LONG)' : '🔴 SELL SIGNAL (SHORT)'}\n\n` +
                         `🪙 Coin: <b>#${symbol.replace('USDT', '')}</b>\n` +
                         `💵 Entry Price: <code>$${currentPrice}</code>\n\n` +
@@ -341,7 +331,6 @@ async function executeScan() {
                         `⚡️ Leverage: 3x - 5x\n\n` +
                         `UTC: ${formattedDate}`;
 
-                    // Admin Log Format
                     const logMessage = `🚨 <b>ADMIN SIGNAL LOG [${signalType}]</b>\n\n` +
                         `• Asset: #${symbol.replace('USDT', '')} @ $${currentPrice}\n` +
                         `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h})\n` +
@@ -364,7 +353,7 @@ async function executeScan() {
         }
 
         console.log("GitHub Action iteration completed successfully.");
-        process.exit(0); // Clean Exit for GitHub Actions
+        process.exit(0);
 
     } catch (error) {
         console.error("Execution Failure:", error.message);
@@ -372,5 +361,4 @@ async function executeScan() {
     }
 }
 
-// Single Run per GitHub Actions Trigger
 executeScan();
