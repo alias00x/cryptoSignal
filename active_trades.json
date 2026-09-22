@@ -1,0 +1,16 @@
+{
+  "trades": {
+    "ADAUSDT": {
+      "symbol": "ADAUSDT",
+      "type": "SELL",
+      "entryPrice": 0.2462,
+      "timestamp": 1790071712985
+    },
+    "SHIBUSDT": {
+      "symbol": "SHIBUSDT",
+      "type": "SELL",
+      "entryPrice": 0.00000602,
+      "timestamp": 1790071713214
+    }
+  }
+}
