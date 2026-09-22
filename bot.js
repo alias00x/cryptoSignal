@@ -205,9 +205,9 @@ async function executeScan() {
                     const signalType = isBullish ? "BUY" : "SELL";
                     const signalIcon = isBullish ? "🟢 BUY" : "🔴 SELL";
 
+                    // 2-Line Minimal Format
                     const cardMessage = `${signalIcon} -> #${symbol.replace('USDT', '')} @ $${currentPrice}\n` +
-                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h})\n` +
-                        `• Market AVG RSI: ${avgRsi1h}`;
+                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h})`;
 
                     signalsToSend.push({
                         symbol,
@@ -219,10 +219,12 @@ async function executeScan() {
             }
         }
 
-        // 3. Dispatch Signals (Header Sent Only Once)
+        // 3. Dispatch Signals (Header with Market AVG RSI and UTC)
         if (signalsToSend.length > 0) {
             const formattedDate = new Date().toISOString().replace('T', '  T: ');
-            const headerMessage = `🩵 <b>New Signal</b>\nUTC: ${formattedDate}`;
+            const headerMessage = `🩵 <b>New Signal</b>\n` +
+                `Market AVG RSI: <code>${avgRsi1h}</code>\n` +
+                `UTC: ${formattedDate}`;
 
             await sendTelegramMessage(headerMessage);
 
