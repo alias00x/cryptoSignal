@@ -23,7 +23,7 @@ function loadState() {
     } catch (e) {
         console.error("Error loading state:", e.message);
     }
-    return { lastReportHour: -1, trades: {} };
+    return { trades: {} };
 }
 
 function saveState(state) {
@@ -43,7 +43,7 @@ function getZoneInfo(rsi) {
 }
 
 function calculateRSI(closes, period = 14) {
-    if (closes.length <= period) return null;
+    if (!closes || closes.length <= period) return null;
     let gains = 0, losses = 0;
 
     for (let i = 1; i <= period; i++) {
@@ -95,43 +95,62 @@ async function sendTelegramMessage(text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Telegram message delivered.");
+        console.log("Telegram alert dispatched.");
     } catch (err) {
-        console.error("Telegram API Error:", err.response ? err.response.data : err.message);
+        console.error("Telegram Error:", err.response ? err.response.data : err.message);
     }
 }
 
+// Strict check: Must have valid 1H AND 5M RSI data
 async function processSymbol(symbol) {
-    const closes1h = await getCandles(symbol, '1h');
-    const closes5m = await getCandles(symbol, '5m');
+    const [closes1h, closes5m] = await Promise.all([
+        getCandles(symbol, '1h'),
+        getCandles(symbol, '5m')
+    ]);
 
+    // Reject if either 1h or 5m data is incomplete
     if (!closes1h || !closes5m || closes1h.length < 20 || closes5m.length < 20) {
         return null;
     }
 
     const currRsi1h = calculateRSI(closes1h);
     const prevRsi1h = calculateRSI(closes1h.slice(0, -1));
+
+    const currRsi5m = calculateRSI(closes5m);
+    const prevRsi5m = calculateRSI(closes5m.slice(0, -1));
+
+    if (currRsi1h === null || prevRsi1h === null || currRsi5m === null || prevRsi5m === null) {
+        return null;
+    }
+
     const currentPrice = closes5m[closes5m.length - 1];
 
     return {
         symbol,
         currentPrice,
         currRsi1h,
-        prevRsi1h
+        prevRsi1h,
+        currRsi5m,
+        prevRsi5m
     };
 }
 
-async function reportActiveResults(validCoins, state) {
+// Guaranteed 10-Minute Result Evaluation (Using 1H & 5M Confluence)
+async function sendTenMinuteResultReport(validCoins, state, avgRsi1h, avgRsi5m) {
     const tradeKeys = Object.keys(state.trades || {});
     const formattedDate = new Date().toISOString().replace('T', '  T: ');
 
     if (tradeKeys.length === 0) {
-        const emptyMessage = `<b>Result</b>\n• No active positions currently open.\n\nUTC: ${formattedDate}`;
-        await sendTelegramMessage(emptyMessage);
+        const idleMessage = `📊 <b>Result (10M Check)</b>\n` +
+            `• No active positions currently open.\n` +
+            `• Market AVG: 1H [<code>${avgRsi1h}</code>] | 5M [<code>${avgRsi5m}</code>]\n` +
+            `• Status: Scanning for confirmed zone transitions...\n\n` +
+            `UTC: ${formattedDate}`;
+        await sendTelegramMessage(idleMessage);
         return;
     }
 
-    let resultLines = [];
+    let reportLines = [];
     let updatedTrades = { ...state.trades };
 
     for (const key of tradeKeys) {
@@ -139,8 +158,7 @@ async function reportActiveResults(validCoins, state) {
         const coinData = validCoins.find(c => c.symbol === trade.symbol);
         if (!coinData) continue;
 
-        const currentPrice = coinData.currentPrice;
-        const currentZone = getZoneInfo(coinData.currRsi1h);
+        const { currentPrice, currRsi1h, currRsi5m } = coinData;
 
         let pnlPercent = trade.type === 'BUY'
             ? ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100
@@ -149,23 +167,50 @@ async function reportActiveResults(validCoins, state) {
         const pnlFormatted = pnlPercent >= 0 ? `+${pnlPercent.toFixed(2)}%` : `${pnlPercent.toFixed(2)}%`;
         const icon = trade.type === 'BUY' ? '🟢 BUY' : '🔴 SELL';
 
-        resultLines.push(`${icon} -> #${trade.symbol.replace('USDT', '')} @ $${trade.entryPrice} -> $${currentPrice} (${pnlFormatted})`);
+        // Decision logic based on BOTH 1H and 5M RSI
+        let advice = "HOLD ⏳";
+        let isClosed = false;
 
-        const isLongTarget = trade.type === 'BUY' && (currentZone.level >= 5 || pnlPercent <= -3.5);
-        const isShortTarget = trade.type === 'SELL' && (currentZone.level <= 1 || pnlPercent <= -3.5);
+        if (trade.type === 'BUY') {
+            if (currRsi5m >= 70 || currRsi1h >= 70) {
+                advice = "Close / TP 🟢 (Overbought Red Exhaustion)";
+                isClosed = true;
+            } else if (pnlPercent <= -2.5 || currRsi5m <= 30) {
+                advice = "Close / SL 🔴 (Micro Support Broken)";
+                isClosed = true;
+            } else {
+                advice = "HOLD ⏳ (Trend Healthy)";
+            }
+        } else { // SELL
+            if (currRsi5m <= 30 || currRsi1h <= 30) {
+                advice = "Close / TP 🟢 (Oversold Green Target)";
+                isClosed = true;
+            } else if (pnlPercent <= -2.5 || currRsi5m >= 70) {
+                advice = "Close / SL 🔴 (Resistance Broken)";
+                isClosed = true;
+            } else {
+                advice = "HOLD ⏳ (Downtrend Intact)";
+            }
+        }
 
-        if (isLongTarget || isShortTarget) {
+        reportLines.push(
+            `${icon} -> #${trade.symbol.replace('USDT', '')} @ $${trade.entryPrice} ➔ $${currentPrice} (${pnlFormatted})\n` +
+            `• Decision: <b>${advice}</b> (1H: <code>${currRsi1h}</code> | 5M: <code>${currRsi5m}</code>)`
+        );
+
+        if (isClosed) {
             delete updatedTrades[key];
         }
     }
 
-    const message = `<b>Result</b>\n` + resultLines.join('\n') + `\n\nUTC: ${formattedDate}`;
-    await sendTelegramMessage(message);
+    const finalReport = `📊 <b>Result (10M Check)</b>\n\n` + reportLines.join('\n\n') + `\n\nUTC: ${formattedDate}`;
+    await sendTelegramMessage(finalReport);
     state.trades = updatedTrades;
+    saveState(state);
 }
 
 async function executeScan() {
-    console.log("Executing Scanner Workflow...");
+    console.log("Starting 10-Minute Cycle Scanner...");
 
     try {
         const results = await Promise.all(SYMBOLS.map(sym => processSymbol(sym)));
@@ -177,37 +222,34 @@ async function executeScan() {
         }
 
         const avgRsi1h = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi1h, 0) / validCoins.length).toFixed(2));
+        const avgRsi5m = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi5m, 0) / validCoins.length).toFixed(2));
+
         let state = loadState();
 
-        // 1. Hourly Result Check
-        const currentHour = new Date().getUTCHours();
-        if (state.lastReportHour !== currentHour) {
-            await reportActiveResults(validCoins, state);
-            state.lastReportHour = currentHour;
-            saveState(state);
-        }
+        // 1. ALWAYS Send Result Report on Every 10-Minute Execution
+        await sendTenMinuteResultReport(validCoins, state, avgRsi1h, avgRsi5m);
 
-        // 2. Collect New Signals
+        // 2. Scan and Dispatch New Signals
         const signalsToSend = [];
 
         for (const coin of validCoins) {
-            const { symbol, currentPrice, currRsi1h, prevRsi1h } = coin;
+            const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m } = coin;
 
             const prevZone1h = getZoneInfo(prevRsi1h);
             const currZone1h = getZoneInfo(currRsi1h);
 
+            // Shift detection with 5M confirmation
             if (prevZone1h.name !== currZone1h.name) {
                 const isBullish = currZone1h.level > prevZone1h.level;
-                const isBuyAllowed = isBullish && avgRsi1h >= 45;
-                const isSellAllowed = !isBullish && avgRsi1h <= 65;
+                const isBuyAllowed = isBullish && avgRsi1h >= 45 && currRsi5m <= 65;
+                const isSellAllowed = !isBullish && avgRsi1h <= 65 && currRsi5m >= 35;
 
                 if (isBuyAllowed || isSellAllowed) {
                     const signalType = isBullish ? "BUY" : "SELL";
                     const signalIcon = isBullish ? "🟢 BUY" : "🔴 SELL";
 
-                    // 2-Line Minimal Format
                     const cardMessage = `${signalIcon} -> #${symbol.replace('USDT', '')} @ $${currentPrice}\n` +
-                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h})`;
+                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h} | 5M: ${currRsi5m})`;
 
                     signalsToSend.push({
                         symbol,
@@ -219,7 +261,7 @@ async function executeScan() {
             }
         }
 
-        // 3. Dispatch Signals (Header with Market AVG RSI and UTC)
+        // 3. Dispatch New Signals if Found
         if (signalsToSend.length > 0) {
             const formattedDate = new Date().toISOString().replace('T', '  T: ');
             const headerMessage = `🩵 <b>New Signal</b>\n` +
@@ -241,11 +283,11 @@ async function executeScan() {
             saveState(state);
         }
 
-        console.log("Scan finished successfully.");
+        console.log("10-Minute execution completed successfully.");
         process.exit(0);
 
     } catch (error) {
-        console.error("Fatal Error:", error.message);
+        console.error("Execution Failure:", error.message);
         process.exit(1);
     }
 }
