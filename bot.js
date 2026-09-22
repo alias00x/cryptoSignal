@@ -418,4 +418,22 @@ async function executeScan() {
     }
 }
 
-executeScan();
+async function startContinuousLoop() {
+    console.log("Starting 50-minute live runner on GitHub...");
+    
+    // اجرای ۵ دوره پشت سر هم با فاصله دقیق ۱۰ دقیقه
+    for (let cycle = 1; cycle <= 5; cycle++) {
+        console.log(`\n--- Cycle ${cycle} of 5 ---`);
+        await executeScan();
+        
+        if (cycle < 5) {
+            console.log("Waiting exactly 10 minutes for next check...");
+            await new Promise(resolve => setTimeout(resolve, 10 * 60 * 1000));
+        }
+    }
+    
+    console.log("50-minute block completed successfully.");
+    process.exit(0);
+}
+
+startContinuousLoop();
