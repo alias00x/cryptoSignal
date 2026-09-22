@@ -3,7 +3,7 @@ const fs = require('fs');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_ID = "-1004340657482";
-const TRADES_FILE = './active_trades.json';
+const STATE_FILE = './active_trades.json';
 
 const SYMBOLS = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 
@@ -15,22 +15,22 @@ const SYMBOLS = [
     'PEPEUSDT', 'SHIBUSDT', 'WIFUSDT', 'PAXGUSDT'
 ];
 
-function loadTrades() {
+function loadState() {
     try {
-        if (fs.existsSync(TRADES_FILE)) {
-            return JSON.parse(fs.readFileSync(TRADES_FILE, 'utf8'));
+        if (fs.existsSync(STATE_FILE)) {
+            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
         }
     } catch (e) {
-        console.error("Error loading trades:", e.message);
+        console.error("Error loading state:", e.message);
     }
-    return {};
+    return { lastReportHour: -1, trades: {} };
 }
 
-function saveTrades(trades) {
+function saveState(state) {
     try {
-        fs.writeFileSync(TRADES_FILE, JSON.stringify(trades, null, 2), 'utf8');
+        fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
     } catch (e) {
-        console.error("Error saving trades:", e.message);
+        console.error("Error saving state:", e.message);
     }
 }
 
@@ -95,7 +95,7 @@ async function sendTelegramMessage(text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Telegram message dispatched.");
+        console.log("Telegram message delivered.");
     } catch (err) {
         console.error("Telegram API Error:", err.response ? err.response.data : err.message);
     }
@@ -129,23 +129,28 @@ async function processSymbol(symbol) {
     };
 }
 
-// 1. Report Results of All Active Predictions
-async function reportActiveResults(validCoins, activeTrades) {
-    const tradeKeys = Object.keys(activeTrades);
-    if (tradeKeys.length === 0) return;
+// 1. Guaranteed Hourly Results Reporter
+async function reportActiveResults(validCoins, state) {
+    const tradeKeys = Object.keys(state.trades || {});
+    const formattedDate = new Date().toISOString().replace('T', '  T: ');
+
+    if (tradeKeys.length === 0) {
+        const emptyMessage = `<b>Result</b>\n• No active positions currently open.\n\nUTC: ${formattedDate}`;
+        await sendTelegramMessage(emptyMessage);
+        return;
+    }
 
     let resultLines = [];
-    let updatedTrades = { ...activeTrades };
+    let updatedTrades = { ...state.trades };
 
     for (const key of tradeKeys) {
-        const trade = activeTrades[key];
+        const trade = state.trades[key];
         const coinData = validCoins.find(c => c.symbol === trade.symbol);
         if (!coinData) continue;
 
         const currentPrice = coinData.currentPrice;
         const currentZone = getZoneInfo(coinData.currRsi1h);
 
-        // Profit & Loss Calculation
         let pnlPercent = trade.type === 'BUY'
             ? ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100
             : ((trade.entryPrice - currentPrice) / trade.entryPrice) * 100;
@@ -155,7 +160,7 @@ async function reportActiveResults(validCoins, activeTrades) {
 
         resultLines.push(`${icon} -> #${trade.symbol.replace('USDT', '')} @ $${trade.entryPrice} -> $${currentPrice} (${pnlFormatted})`);
 
-        // Close trades if target hit or stopped out
+        // Close conditions
         const isLongTarget = trade.type === 'BUY' && (currentZone.level >= 5 || pnlPercent <= -3.5);
         const isShortTarget = trade.type === 'SELL' && (currentZone.level <= 1 || pnlPercent <= -3.5);
 
@@ -164,16 +169,13 @@ async function reportActiveResults(validCoins, activeTrades) {
         }
     }
 
-    if (resultLines.length > 0) {
-        const formattedDate = new Date().toISOString().replace('T', '  T: ');
-        const message = `<b>Result</b>\n` + resultLines.join('\n') + `\n\nUTC: ${formattedDate}`;
-        await sendTelegramMessage(message);
-        saveTrades(updatedTrades);
-    }
+    const message = `<b>Result</b>\n` + resultLines.join('\n') + `\n\nUTC: ${formattedDate}`;
+    await sendTelegramMessage(message);
+    state.trades = updatedTrades;
 }
 
 async function executeScan() {
-    console.log("Executing Scan...");
+    console.log("Executing Scanner Workflow...");
 
     try {
         const results = await Promise.all(SYMBOLS.map(sym => processSymbol(sym)));
@@ -185,18 +187,19 @@ async function executeScan() {
         }
 
         const avgRsi1h = parseFloat((validCoins.reduce((acc, c) => acc + c.currRsi1h, 0) / validCoins.length).toFixed(2));
-        let activeTrades = loadTrades();
+        let state = loadState();
 
-        // 1. Send Hourly Results Report First (Top of the hour)
-        const currentMinute = new Date().getUTCMinutes();
-        if (currentMinute < 10) {
-            await reportActiveResults(validCoins, activeTrades);
-            activeTrades = loadTrades();
+        // Step 1: Check if top of the hour changed
+        const currentHour = new Date().getUTCHours();
+        if (state.lastReportHour !== currentHour) {
+            await reportActiveResults(validCoins, state);
+            state.lastReportHour = currentHour;
+            saveState(state);
         }
 
-        // 2. Scan and Issue New Signals Afterwards
+        // Step 2: Scan for New Signals
         for (const coin of validCoins) {
-            const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m, prevRsi5m } = coin;
+            const { symbol, currentPrice, currRsi1h, prevRsi1h } = coin;
 
             const prevZone1h = getZoneInfo(prevRsi1h);
             const currZone1h = getZoneInfo(currRsi1h);
@@ -218,21 +221,24 @@ async function executeScan() {
                         `• Market AVG RSI: ${avgRsi1h}\n` +
                         `UTC: ${formattedDate}`;
 
+                    // Send "New Signal" alert first
+                    await sendTelegramMessage("🩵 <b>New Signal</b>");
+                    // Send actual signal
                     await sendTelegramMessage(signalMessage);
 
-                    // Register trade into database
-                    activeTrades[symbol] = {
+                    // Register trade in state
+                    state.trades[symbol] = {
                         symbol,
                         type: signalType,
                         entryPrice: currentPrice,
                         timestamp: Date.now()
                     };
-                    saveTrades(activeTrades);
+                    saveState(state);
                 }
             }
         }
 
-        console.log("Scan finished cleanly.");
+        console.log("Scan iteration completed.");
         process.exit(0);
 
     } catch (error) {
