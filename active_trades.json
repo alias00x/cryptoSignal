@@ -23,13 +23,14 @@
       "type": "SELL",
       "entryPrice": 0.2066,
       "timestamp": 1790074045790
-    },
-    "TAOUSDT": {
-      "symbol": "TAOUSDT",
-      "type": "BUY",
-      "entryPrice": 315.5,
-      "timestamp": 1790076215856
     }
   },
-  "closedToday": []
+  "closedToday": [
+    {
+      "symbol": "TAOUSDT",
+      "type": "BUY",
+      "pnlPercent": 3.33,
+      "reason": "Take Profit"
+    }
+  ]
 }
