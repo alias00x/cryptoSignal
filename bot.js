@@ -2,7 +2,8 @@ const axios = require('axios');
 const fs = require('fs');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TARGET_CHAT_ID = "-1004340657482";
+const TELEGRAM_CHAT_LOG = "-1004340657482";   // Admin Log Channel
+const TELEGRAM_CHAT_VIPI = "-1003909320436";  // VIP Users Channel
 const STATE_FILE = './active_trades.json';
 
 const SYMBOLS = [
@@ -23,7 +24,7 @@ function loadState() {
     } catch (e) {
         console.error("Error loading state:", e.message);
     }
-    return { trades: {} };
+    return { trades: {}, closedToday: [], lastDailyReportDate: "" };
 }
 
 function saveState(state) {
@@ -62,7 +63,7 @@ function calculateRSI(closes, period = 14) {
             avgLoss = (avgLoss * (period - 1)) / period;
         } else {
             avgGain = (avgGain * (period - 1)) / period;
-            avgLoss = (avgLoss * (period - 1) - diff) / period;
+            avgLoss = (avgLoss * (period - 1)) - diff) / period;
         }
     }
 
@@ -87,28 +88,26 @@ async function getCandles(symbol, interval, limit = 50) {
     }
 }
 
-async function sendTelegramMessage(text) {
+async function sendTelegramMessage(chatId, text) {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     try {
         await axios.post(url, {
-            chat_id: TARGET_CHAT_ID,
+            chat_id: chatId,
             text: text,
             parse_mode: 'HTML'
         });
-        console.log("Telegram alert dispatched.");
+        console.log(`Alert sent to: ${chatId}`);
     } catch (err) {
-        console.error("Telegram Error:", err.response ? err.response.data : err.message);
+        console.error(`Telegram Error (${chatId}):`, err.response ? err.response.data : err.message);
     }
 }
 
-// Strict check: Must have valid 1H AND 5M RSI data
 async function processSymbol(symbol) {
     const [closes1h, closes5m] = await Promise.all([
         getCandles(symbol, '1h'),
         getCandles(symbol, '5m')
     ]);
 
-    // Reject if either 1h or 5m data is incomplete
     if (!closes1h || !closes5m || closes1h.length < 20 || closes5m.length < 20) {
         return null;
     }
@@ -135,23 +134,26 @@ async function processSymbol(symbol) {
     };
 }
 
-// Guaranteed 10-Minute Result Evaluation (Using 1H & 5M Confluence)
-async function sendTenMinuteResultReport(validCoins, state, avgRsi1h, avgRsi5m) {
+// 1. Guaranteed 10-Minute Trade Status Report
+async function sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m) {
     const tradeKeys = Object.keys(state.trades || {});
     const formattedDate = new Date().toISOString().replace('T', '  T: ');
 
     if (tradeKeys.length === 0) {
-        const idleMessage = `📊 <b>Result (10M Check)</b>\n` +
+        const idleMessage = `📊 <b>TRADE STATUS UPDATE (10M Check)</b>\n\n` +
             `• No active positions currently open.\n` +
-            `• Market AVG: 1H [<code>${avgRsi1h}</code>] | 5M [<code>${avgRsi5m}</code>]\n` +
-            `• Status: Scanning for confirmed zone transitions...\n\n` +
+            `• Market Climate: 1H RSI [<code>${avgRsi1h}</code>] | 5M RSI [<code>${avgRsi5m}</code>]\n` +
+            `• Status: Scanning for high-probability setups...\n\n` +
             `UTC: ${formattedDate}`;
-        await sendTelegramMessage(idleMessage);
+
+        await sendTelegramMessage(TELEGRAM_CHAT_LOG, idleMessage);
         return;
     }
 
-    let reportLines = [];
+    let vipCards = [];
+    let logCards = [];
     let updatedTrades = { ...state.trades };
+    if (!state.closedToday) state.closedToday = [];
 
     for (const key of tradeKeys) {
         const trade = state.trades[key];
@@ -165,52 +167,123 @@ async function sendTenMinuteResultReport(validCoins, state, avgRsi1h, avgRsi5m) 
             : ((trade.entryPrice - currentPrice) / trade.entryPrice) * 100;
 
         const pnlFormatted = pnlPercent >= 0 ? `+${pnlPercent.toFixed(2)}%` : `${pnlPercent.toFixed(2)}%`;
-        const icon = trade.type === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+        const pnlIcon = pnlPercent >= 0 ? '🟢' : '🔴';
 
-        // Decision logic based on BOTH 1H and 5M RSI
-        let advice = "HOLD ⏳";
+        let actionBanner = "👉 ACTION ➔ ⏳ [ HOLD POSITION ] ⏳";
         let isClosed = false;
+        let closeReason = "";
 
         if (trade.type === 'BUY') {
             if (currRsi5m >= 70 || currRsi1h >= 70) {
-                advice = "Close / TP 🟢 (Overbought Red Exhaustion)";
+                actionBanner = "👉 ACTION ➔ 💰 [ CLOSE & TAKE PROFIT ] 🎯";
                 isClosed = true;
+                closeReason = "Take Profit";
             } else if (pnlPercent <= -2.5 || currRsi5m <= 30) {
-                advice = "Close / SL 🔴 (Micro Support Broken)";
+                actionBanner = "👉 ACTION ➔ 🛑 [ CLOSE & STOP LOSS ] 🛑";
                 isClosed = true;
-            } else {
-                advice = "HOLD ⏳ (Trend Healthy)";
+                closeReason = "Stop Loss";
             }
         } else { // SELL
             if (currRsi5m <= 30 || currRsi1h <= 30) {
-                advice = "Close / TP 🟢 (Oversold Green Target)";
+                actionBanner = "👉 ACTION ➔ 💰 [ CLOSE & TAKE PROFIT ] 🎯";
                 isClosed = true;
+                closeReason = "Take Profit";
             } else if (pnlPercent <= -2.5 || currRsi5m >= 70) {
-                advice = "Close / SL 🔴 (Resistance Broken)";
+                actionBanner = "👉 ACTION ➔ 🛑 [ CLOSE & STOP LOSS ] 🛑";
                 isClosed = true;
-            } else {
-                advice = "HOLD ⏳ (Downtrend Intact)";
+                closeReason = "Stop Loss";
             }
         }
 
-        reportLines.push(
-            `${icon} -> #${trade.symbol.replace('USDT', '')} @ $${trade.entryPrice} ➔ $${currentPrice} (${pnlFormatted})\n` +
-            `• Decision: <b>${advice}</b> (1H: <code>${currRsi1h}</code> | 5M: <code>${currRsi5m}</code>)`
-        );
+        // VIP Client Format
+        const vipCard = `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
+            `• Price: <code>$${trade.entryPrice}</code> ➔ <code>$${currentPrice}</code> (<b>${pnlFormatted}</b> ${pnlIcon})\n` +
+            `${actionBanner}`;
+        vipCards.push(vipCard);
+
+        // Admin Log Format
+        const logCard = `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
+            `• PnL: ${pnlFormatted} | Entry: $${trade.entryPrice} | Now: $${currentPrice}\n` +
+            `• Telemetry: 1H RSI [${currRsi1h}] | 5M RSI [${currRsi5m}]\n` +
+            `${actionBanner}`;
+        logCards.push(logCard);
 
         if (isClosed) {
+            state.closedToday.push({
+                symbol: trade.symbol,
+                type: trade.type,
+                pnlPercent: parseFloat(pnlPercent.toFixed(2)),
+                reason: closeReason
+            });
             delete updatedTrades[key];
         }
     }
 
-    const finalReport = `📊 <b>Result (10M Check)</b>\n\n` + reportLines.join('\n\n') + `\n\nUTC: ${formattedDate}`;
-    await sendTelegramMessage(finalReport);
+    const vipReport = `📊 <b>TRADE STATUS UPDATE (10M Check)</b>\n\n` + 
+        vipCards.join('\n─────────────────────\n') + 
+        `\n\nUTC: ${formattedDate}`;
+
+    const logReport = `📊 <b>ADMIN TELEMETRY UPDATE (10M Check)</b>\n\n` + 
+        logCards.join('\n─────────────────────\n') + 
+        `\n\nUTC: ${formattedDate}`;
+
+    await sendTelegramMessage(TELEGRAM_CHAT_VIPI, vipReport);
+    await sendTelegramMessage(TELEGRAM_CHAT_LOG, logReport);
+
     state.trades = updatedTrades;
     saveState(state);
 }
 
+// 2. Comprehensive Daily Performance Report (UTC 00:00)
+async function checkDailyPerformanceReport(state) {
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const currentHour = now.getUTCHours();
+
+    if (currentHour === 0 && state.lastDailyReportDate !== today) {
+        const closed = state.closedToday || [];
+        if (closed.length === 0) return;
+
+        const wins = closed.filter(t => t.pnlPercent > 0);
+        const losses = closed.filter(t => t.pnlPercent <= 0);
+        const winRate = ((wins.length / closed.length) * 100).toFixed(1);
+
+        const grossProfit = wins.reduce((acc, t) => acc + t.pnlPercent, 0);
+        const grossLoss = losses.reduce((acc, t) => acc + t.pnlPercent, 0);
+        const netPnL = (grossProfit + grossLoss).toFixed(2);
+
+        let breakdownLines = closed.map(t => {
+            const icon = t.pnlPercent > 0 ? "✅" : "❌";
+            const targetIcon = t.pnlPercent > 0 ? "🎯" : "🛑";
+            return `${icon} #${t.symbol.replace('USDT', '')} [${t.type}] ➔ ${t.pnlPercent > 0 ? '+' : ''}${t.pnlPercent}% ${targetIcon} (${t.reason})`;
+        });
+
+        const dailyMessage = `🏆 <b>DAILY AUDIT & PERFORMANCE REPORT</b>\n` +
+            `📅 Date: ${today} | UTC Close\n\n` +
+            `📈 <b>CORE PERFORMANCE:</b>\n` +
+            `• Total Trades: <b>${closed.length}</b>\n` +
+            `• Win / Loss: <b>${wins.length}W - ${losses.length}L</b>\n` +
+            `• Win Rate: <b>${winRate}% 🎯</b>\n` +
+            `• Gross Profit: <b>+${grossProfit.toFixed(2)}%</b>\n` +
+            `• Gross Loss: <b>${grossLoss.toFixed(2)}%</b>\n` +
+            `🔥 <b>TOTAL NET PnL: ${netPnL >= 0 ? '+' : ''}${netPnL}% 🚀</b>\n` +
+            `─────────────────────\n` +
+            `📋 <b>CLOSED TRADES:</b>\n` +
+            breakdownLines.join('\n') +
+            `\n\n💡 <i>Strict risk discipline guarantees long-term edge!</i>`;
+
+        await sendTelegramMessage(TELEGRAM_CHAT_VIPI, dailyMessage);
+        await sendTelegramMessage(TELEGRAM_CHAT_LOG, dailyMessage);
+
+        state.lastDailyReportDate = today;
+        state.closedToday = [];
+        saveState(state);
+    }
+}
+
+// Master Execution (Designed for GitHub Actions)
 async function executeScan() {
-    console.log("Starting 10-Minute Cycle Scanner...");
+    console.log(`Starting GitHub Actions Scan Execution...`);
 
     try {
         const results = await Promise.all(SYMBOLS.map(sym => processSymbol(sym)));
@@ -226,19 +299,23 @@ async function executeScan() {
 
         let state = loadState();
 
-        // 1. ALWAYS Send Result Report on Every 10-Minute Execution
-        await sendTenMinuteResultReport(validCoins, state, avgRsi1h, avgRsi5m);
+        // 1. Send 10-Minute Trade Status Update
+        await sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m);
 
-        // 2. Scan and Dispatch New Signals
-        const signalsToSend = [];
+        // 2. Check Daily Audit
+        await checkDailyPerformanceReport(state);
 
+        // 3. Scan For New Signals (No Duplicates on Active Trades)
         for (const coin of validCoins) {
             const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m } = coin;
+
+            if (state.trades[symbol]) {
+                continue; 
+            }
 
             const prevZone1h = getZoneInfo(prevRsi1h);
             const currZone1h = getZoneInfo(currRsi1h);
 
-            // Shift detection with 5M confirmation
             if (prevZone1h.name !== currZone1h.name) {
                 const isBullish = currZone1h.level > prevZone1h.level;
                 const isBuyAllowed = isBullish && avgRsi1h >= 45 && currRsi5m <= 65;
@@ -246,45 +323,48 @@ async function executeScan() {
 
                 if (isBuyAllowed || isSellAllowed) {
                     const signalType = isBullish ? "BUY" : "SELL";
-                    const signalIcon = isBullish ? "🟢 BUY" : "🔴 SELL";
+                    const formattedDate = new Date().toISOString().replace('T', '  T: ');
 
-                    const cardMessage = `${signalIcon} -> #${symbol.replace('USDT', '')} @ $${currentPrice}\n` +
-                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h} | 5M: ${currRsi5m})`;
+                    const tpPrice = isBullish 
+                        ? (currentPrice * 1.035).toFixed(4) 
+                        : (currentPrice * 0.965).toFixed(4);
+                    const slPrice = isBullish 
+                        ? (currentPrice * 0.975).toFixed(4) 
+                        : (currentPrice * 1.025).toFixed(4);
 
-                    signalsToSend.push({
-                        symbol,
-                        signalType,
-                        currentPrice,
-                        cardMessage
-                    });
+                    // VIP Format
+                    const vipMessage = `${isBullish ? '🟢 BUY SIGNAL (LONG)' : '🔴 SELL SIGNAL (SHORT)'}\n\n` +
+                        `🪙 Coin: <b>#${symbol.replace('USDT', '')}</b>\n` +
+                        `💵 Entry Price: <code>$${currentPrice}</code>\n\n` +
+                        `🎯 Target (TP): <code>$${tpPrice}</code> (+3.5%)\n` +
+                        `🛑 Stop Loss (SL): <code>$${slPrice}</code> (-2.5%)\n` +
+                        `⚡️ Leverage: 3x - 5x\n\n` +
+                        `UTC: ${formattedDate}`;
+
+                    // Admin Log Format
+                    const logMessage = `🚨 <b>ADMIN SIGNAL LOG [${signalType}]</b>\n\n` +
+                        `• Asset: #${symbol.replace('USDT', '')} @ $${currentPrice}\n` +
+                        `• Shift: [${prevZone1h.name}] ➔ [${currZone1h.name}] (1H RSI: ${currRsi1h})\n` +
+                        `• Micro 5M RSI: ${currRsi5m}\n` +
+                        `• Market AVG RSI: ${avgRsi1h}\n` +
+                        `UTC: ${formattedDate}`;
+
+                    await sendTelegramMessage(TELEGRAM_CHAT_VIPI, vipMessage);
+                    await sendTelegramMessage(TELEGRAM_CHAT_LOG, logMessage);
+
+                    state.trades[symbol] = {
+                        symbol: symbol,
+                        type: signalType,
+                        entryPrice: currentPrice,
+                        timestamp: Date.now()
+                    };
+                    saveState(state);
                 }
             }
         }
 
-        // 3. Dispatch New Signals if Found
-        if (signalsToSend.length > 0) {
-            const formattedDate = new Date().toISOString().replace('T', '  T: ');
-            const headerMessage = `🩵 <b>New Signal</b>\n` +
-                `Market AVG RSI: <code>${avgRsi1h}</code>\n` +
-                `UTC: ${formattedDate}`;
-
-            await sendTelegramMessage(headerMessage);
-
-            for (const sig of signalsToSend) {
-                await sendTelegramMessage(sig.cardMessage);
-
-                state.trades[sig.symbol] = {
-                    symbol: sig.symbol,
-                    type: sig.signalType,
-                    entryPrice: sig.currentPrice,
-                    timestamp: Date.now()
-                };
-            }
-            saveState(state);
-        }
-
-        console.log("10-Minute execution completed successfully.");
-        process.exit(0);
+        console.log("GitHub Action iteration completed successfully.");
+        process.exit(0); // Clean Exit for GitHub Actions
 
     } catch (error) {
         console.error("Execution Failure:", error.message);
@@ -292,4 +372,5 @@ async function executeScan() {
     }
 }
 
+// Single Run per GitHub Actions Trigger
 executeScan();
