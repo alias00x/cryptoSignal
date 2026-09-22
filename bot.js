@@ -2,7 +2,7 @@ const axios = require('axios');
 const fs = require('fs');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TELEGRAM_CHAT_LOG = "-1004340657482";   // Admin / Private Analytics Channel
+const TELEGRAM_CHAT_LOG = "-1004340657482";   // Admin / Technical Channel
 const TELEGRAM_CHAT_VIPI = "-1003909320436";  // VIP / Client Channel
 const STATE_FILE = './active_trades.json';
 
@@ -63,7 +63,7 @@ function calculateRSI(closes, period = 14) {
             avgLoss = (avgLoss * (period - 1)) / period;
         } else {
             avgGain = (avgGain * (period - 1)) / period;
-            avgLoss = (avgLoss * (period - 1) - diff) / period; // Verified syntax
+            avgLoss = (avgLoss * (period - 1) - diff) / period;
         }
     }
 
@@ -72,7 +72,6 @@ function calculateRSI(closes, period = 14) {
     return parseFloat((100 - (100 / (1 + rs))).toFixed(2));
 }
 
-// Global unblocked candle & volume ingestion
 async function getCandles(symbol, interval, limit = 50) {
     try {
         const url = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
@@ -92,7 +91,6 @@ async function getCandles(symbol, interval, limit = 50) {
     }
 }
 
-// Fetch live Funding Rate safely
 async function getFundingRate(symbol) {
     try {
         const url = `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`;
@@ -101,9 +99,9 @@ async function getFundingRate(symbol) {
             return parseFloat(res.data.lastFundingRate);
         }
     } catch (e) {
-        // Fallback for cloud runners: neutral baseline
+        // Fallback for cloud environments
     }
-    return 0.0001; // Standard neutral baseline (0.01%)
+    return 0.0001;
 }
 
 async function sendTelegramMessage(chatId, text) {
@@ -114,7 +112,7 @@ async function sendTelegramMessage(chatId, text) {
             text: text,
             parse_mode: 'HTML'
         });
-        console.log(`Delivered to chat: ${chatId}`);
+        console.log(`Alert delivered to chat: ${chatId}`);
     } catch (err) {
         console.error(`Telegram Delivery Error (${chatId}):`, err.response ? err.response.data : err.message);
     }
@@ -144,7 +142,6 @@ async function processSymbol(symbol) {
         return null;
     }
 
-    // Volume Surge Analysis (Fuel detection)
     const recentVolumes = candles5m.slice(-15).map(c => c.volume);
     const avgVolume = recentVolumes.reduce((a, b) => a + b, 0) / recentVolumes.length;
     const currentVolume = candles5m[candles5m.length - 1].volume;
@@ -164,7 +161,7 @@ async function processSymbol(symbol) {
     };
 }
 
-// 1. Guaranteed 10-Minute Trade Status Report (Prominent Action Banners)
+// 1. Guaranteed 10-Minute Trade Status Report
 async function sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m) {
     const tradeKeys = Object.keys(state.trades || {});
     const formattedDate = new Date().toISOString().replace('T', '  T: ');
@@ -207,31 +204,31 @@ async function sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m) {
             if (currRsi5m >= 70 || currRsi1h >= 70) {
                 actionBanner = "👉 ACTION ➔ 💰 [ CLOSE & TAKE PROFIT ] 🎯";
                 isClosed = true;
-                closeReason = "Target Reached (Overbought)";
+                closeReason = "Take Profit";
             } else if (pnlPercent <= -2.5 || currRsi5m <= 30) {
                 actionBanner = "👉 ACTION ➔ 🛑 [ CLOSE & STOP LOSS ] 🛑";
                 isClosed = true;
-                closeReason = "Stop Loss Triggered";
+                closeReason = "Stop Loss";
             }
         } else { // SELL
             if (currRsi5m <= 30 || currRsi1h <= 30) {
                 actionBanner = "👉 ACTION ➔ 💰 [ CLOSE & TAKE PROFIT ] 🎯";
                 isClosed = true;
-                closeReason = "Target Reached (Oversold)";
+                closeReason = "Take Profit";
             } else if (pnlPercent <= -2.5 || currRsi5m >= 70) {
                 actionBanner = "👉 ACTION ➔ 🛑 [ CLOSE & STOP LOSS ] 🛑";
                 isClosed = true;
-                closeReason = "Stop Loss Triggered";
+                closeReason = "Stop Loss";
             }
         }
 
-        // VIP Client Card
+        // VIP Client Format
         const vipCard = `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
             `• Price: <code>$${trade.entryPrice}</code> ➔ <code>$${currentPrice}</code> (<b>${pnlFormatted}</b> ${pnlIcon})\n` +
             `${actionBanner}`;
         vipCards.push(vipCard);
 
-        // Admin Detailed Log Card
+        // Admin Detailed Format
         const logCard = `🪙 <b>#${trade.symbol.replace('USDT', '')}</b> [${trade.type}]\n` +
             `• PnL: ${pnlFormatted} | Entry: $${trade.entryPrice} | Now: $${currentPrice}\n` +
             `• Telemetry: 1H RSI [${currRsi1h}] | 5M RSI [${currRsi5m}]\n` +
@@ -313,14 +310,14 @@ async function checkDailyPerformanceReport(state) {
 
 // Master Execution Function
 async function executeScan() {
-    console.log("Starting 3-Pillar Institutional Market Execution...");
+    console.log("Executing 3-Pillar Institutional Market Scanner...");
 
     try {
         const results = await Promise.all(SYMBOLS.map(sym => processSymbol(sym)));
         const validCoins = results.filter(r => r !== null);
 
         if (validCoins.length === 0) {
-            console.error("Zero assets fetched.");
+            console.error("Zero assets fetched. Check network endpoint.");
             process.exit(1);
         }
 
@@ -329,13 +326,13 @@ async function executeScan() {
 
         let state = loadState();
 
-        // 1. Send 10-Minute Trade Status Report
+        // 1. Send Guaranteed 10-Minute Trade Status Report
         await sendTenMinuteReport(validCoins, state, avgRsi1h, avgRsi5m);
 
         // 2. Check Daily Midnight Audit
         await checkDailyPerformanceReport(state);
 
-        // 3. Scan with the 3-Pillar Institutional Formula
+        // 3. Scan with the 3-Pillar Formula
         for (const coin of validCoins) {
             const { symbol, currentPrice, currRsi1h, prevRsi1h, currRsi5m, fundingRate, volumeRatio } = coin;
 
@@ -347,22 +344,20 @@ async function executeScan() {
             const prevZone1h = getZoneInfo(prevRsi1h);
             const currZone1h = getZoneInfo(currRsi1h);
 
-            // Pillar 1: Location Shift (Zone transition)
+            // Pillar 1: Location Shift
             const is1hShift = prevZone1h.name !== currZone1h.name;
             if (!is1hShift) continue;
 
             const isShiftUp = currZone1h.level > prevZone1h.level;
 
             // Pillar 2: Crowd Trap (Funding Rate)
-            // Bullish: Funding is negative or very low (retail shorting)
             const isFundingBullish = fundingRate <= 0.00015;
-            // Bearish: Funding is excessively positive (greedy longs)
             const isFundingBearish = fundingRate >= 0.00005;
 
-            // Pillar 3: Fuel (Volume / Liquidity Expansion)
-            const hasFuel = volumeRatio >= 1.15; // 15%+ above average volume
+            // Pillar 3: Fuel (Volume Expansion)
+            const hasFuel = volumeRatio >= 1.15;
 
-            // Confluence Evaluation
+            // Confluence Verification
             const isInstitutionalBuy = isShiftUp && isFundingBullish && hasFuel && avgRsi1h >= 45 && currRsi5m <= 65;
             const isInstitutionalSell = !isShiftUp && isFundingBearish && hasFuel && avgRsi1h <= 65 && currRsi5m >= 35;
 
@@ -380,7 +375,7 @@ async function executeScan() {
 
                 const confluenceScore = (hasFuel && Math.abs(fundingRate) > 0.0001) ? "95%" : "92%";
 
-                // A. VIP Client Message (Clean, Actionable, No Jargon)
+                // A. VIP Client Message (Action-focused)
                 const vipMessage = `⚡️ <b>${isInstitutionalBuy ? '🟢 BUY SIGNAL (LONG)' : '🔴 SELL SIGNAL (SHORT)'}</b>\n\n` +
                     `🪙 Coin: <b>#${symbol.replace('USDT', '')}</b>\n` +
                     `💵 Entry Price: <code>$${currentPrice}</code>\n\n` +
@@ -396,7 +391,7 @@ async function executeScan() {
                     `🎯 <b>THE 3 PILLARS CONFLUENCE:</b>\n` +
                     `1️⃣ <b>Location (RSI):</b> [${currZone1h.name}] ➔ 1H: <code>${currRsi1h}</code> | 5M: <code>${currRsi5m}</code>\n` +
                     `2️⃣ <b>Crowd Trap (Funding):</b> <code>${fundingPercent}</code> ${isInstitutionalBuy ? '🔴 (Short Trap)' : '🟢 (Long Trap)'}\n` +
-                    `3️⃣ <b>Fuel (Volume Surge):</b> <code>${volumeRatio}x Avg</code> 🟢 (Institutional Inflow)\n\n` +
+                    `3️⃣ <b>Fuel (Volume Surge):</b> <code>${volumeRatio}x Avg</code> 🟢 (Whale Inflow)\n\n` +
                     `💡 <b>Setup:</b> ${isInstitutionalBuy ? 'Short Squeeze Imminent' : 'Long Liquidation Cascade'}\n` +
                     `⭐️ Confluence: <b>${confluenceScore} (3/3 Matched)</b>\n\n` +
                     `UTC: ${formattedDate}`;
@@ -414,7 +409,7 @@ async function executeScan() {
             }
         }
 
-        console.log("3-Pillar Institutional scan completed successfully.");
+        console.log("3-Pillar Institutional scan finished cleanly.");
         process.exit(0);
 
     } catch (error) {
