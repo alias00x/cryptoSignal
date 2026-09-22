@@ -3,14 +3,26 @@
     "ADAUSDT": {
       "symbol": "ADAUSDT",
       "type": "SELL",
-      "entryPrice": 0.2462,
-      "timestamp": 1790071712985
+      "entryPrice": 0.2454,
+      "timestamp": 1790074045619
     },
     "SHIBUSDT": {
       "symbol": "SHIBUSDT",
       "type": "SELL",
-      "entryPrice": 0.00000602,
-      "timestamp": 1790071713214
+      "entryPrice": 0.00000601,
+      "timestamp": 1790074053028
+    },
+    "BTCUSDT": {
+      "symbol": "BTCUSDT",
+      "type": "SELL",
+      "entryPrice": 85814,
+      "timestamp": 1790074045377
+    },
+    "FETUSDT": {
+      "symbol": "FETUSDT",
+      "type": "SELL",
+      "entryPrice": 0.2066,
+      "timestamp": 1790074045790
     }
   }
 }
