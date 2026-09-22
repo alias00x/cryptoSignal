@@ -1,36 +1,5 @@
 {
-  "trades": {
-    "ADAUSDT": {
-      "symbol": "ADAUSDT",
-      "type": "SELL",
-      "entryPrice": 0.2454,
-      "timestamp": 1790074045619
-    },
-    "SHIBUSDT": {
-      "symbol": "SHIBUSDT",
-      "type": "SELL",
-      "entryPrice": 0.00000601,
-      "timestamp": 1790074053028
-    },
-    "BTCUSDT": {
-      "symbol": "BTCUSDT",
-      "type": "SELL",
-      "entryPrice": 85814,
-      "timestamp": 1790074045377
-    },
-    "FETUSDT": {
-      "symbol": "FETUSDT",
-      "type": "SELL",
-      "entryPrice": 0.2066,
-      "timestamp": 1790074045790
-    }
-  },
-  "closedToday": [
-    {
-      "symbol": "TAOUSDT",
-      "type": "BUY",
-      "pnlPercent": 3.33,
-      "reason": "Take Profit"
-    }
-  ]
+  "trades": {},
+  "closedToday": [],
+  "lastDailyReportDate": ""
 }
