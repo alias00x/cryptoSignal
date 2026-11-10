@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TELEGRAM_CHAT_LOG = "-1004340657482";
+const TELEGRAM_CHAT_LOG = "-1004307908490";
 
 // Function to send Telegram message 
 async function sendTelegramAlert(message) {
